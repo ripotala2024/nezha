@@ -5,6 +5,12 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "要构建的平台（逗号分隔，留空=全部）。可选值：windows-x86_64, windows-arm64, macos-x86_64, macos-arm64, linux-x86_64"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -16,6 +22,7 @@ concurrency:
 jobs:
   verify-version:
     name: Verify version consistency
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -34,39 +41,51 @@ jobs:
             exit 1
           fi
 
+  setup-matrix:
+    name: Resolve build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Resolve matrix from inputs
+        id: resolve
+        env:
+          PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
+        run: |
+          set -euo pipefail
+          ALL='[
+            {"name":"Windows x86_64","artifact_name":"windows-x86_64","runner":"windows-latest","target":"x86_64-pc-windows-msvc","bundle_args":"--bundles nsis,msi"},
+            {"name":"Windows ARM64","artifact_name":"windows-arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","bundle_args":"--bundles nsis,msi"},
+            {"name":"macOS x86_64","artifact_name":"macos-x86_64","runner":"macos-15-intel","target":"x86_64-apple-darwin","bundle_args":"--bundles dmg"},
+            {"name":"macOS ARM64","artifact_name":"macos-arm64","runner":"macos-15","target":"aarch64-apple-darwin","bundle_args":"--bundles dmg"},
+            {"name":"Linux x86_64","artifact_name":"linux-x86_64","runner":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","bundle_args":"--bundles deb,rpm"}
+          ]'
+          INPUT="${PLATFORMS_INPUT:-}"
+          if [ -z "$INPUT" ]; then
+            MATRIX=$(echo "$ALL" | jq -c '{include: .}')
+          else
+            FILTER=$(echo "$INPUT" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+            MATRIX=$(echo "$ALL" | jq -c --argjson sel "$FILTER" '{include: map(select(.artifact_name as $a | $sel | index($a)))}')
+            COUNT=$(echo "$MATRIX" | jq '.include | length')
+            if [ "$COUNT" = "0" ]; then
+              echo "::error::没有匹配到任何平台。输入='$INPUT'，可选值见 workflow_dispatch.inputs.platforms 描述。"
+              exit 1
+            fi
+          fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Resolved matrix: $MATRIX"
+
   build:
     name: Build ${{ matrix.name }}
-    needs: verify-version
+    needs: [verify-version, setup-matrix]
+    if: |
+      always() &&
+      needs.setup-matrix.result == 'success' &&
+      (needs.verify-version.result == 'success' || needs.verify-version.result == 'skipped')
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: Windows x86_64
-            artifact_name: windows-x86_64
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            bundle_args: --bundles nsis,msi
-          - name: Windows ARM64
-            artifact_name: windows-arm64
-            runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            bundle_args: --bundles nsis,msi
-          - name: macOS x86_64
-            artifact_name: macos-x86_64
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
-            bundle_args: --bundles dmg
-          - name: macOS ARM64
-            artifact_name: macos-arm64
-            runner: macos-15
-            target: aarch64-apple-darwin
-            bundle_args: --bundles dmg
-          - name: Linux x86_64
-            artifact_name: linux-x86_64
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            bundle_args: --bundles deb,rpm
+      matrix: ${{ fromJSON(needs.setup-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
@@ -127,6 +146,7 @@ jobs:
   release:
     name: Create GitHub Release
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
