@@ -31,6 +31,8 @@ import { WelcomePage } from "./components/WelcomePage";
 import { ProjectPage } from "./components/ProjectPage";
 import { SKILL_HUB_CHANGED_EVENT } from "./components/app-settings/types";
 import { useToast } from "./components/Toast";
+import { isHideWindowShortcut } from "./shortcuts";
+import { APP_PLATFORM } from "./platform";
 import { useTerminalManager } from "./hooks/useTerminalManager";
 import { useWorktreeDiffStats } from "./hooks/useWorktreeDiffStats";
 import { useI18n } from "./i18n";
@@ -160,6 +162,11 @@ function getInitialTaskDisplayWindow(): TaskDisplayWindow {
   return stored == null ? DEFAULT_TASK_DISPLAY_WINDOW : normalizeTaskDisplayWindow(stored);
 }
 
+function getInitialAttentionBadge(): boolean {
+  // 默认开启:项目栏显示待确认任务数量角标;关闭后回退为黄色小圆点
+  return localStorage.getItem("nezha:attentionBadge") !== "0";
+}
+
 function getInitialFontFamily(key: string, fallback: FontFamily): FontFamily {
   const stored = localStorage.getItem(key);
   return stored || fallback;
@@ -178,6 +185,7 @@ function App() {
   const [taskDisplayWindow, setTaskDisplayWindow] = useState<TaskDisplayWindow>(
     getInitialTaskDisplayWindow,
   );
+  const [attentionBadge, setAttentionBadge] = useState<boolean>(getInitialAttentionBadge);
   const [uiFontFamily, setUiFontFamily] = useState<FontFamily>(() =>
     getInitialFontFamily("nezha:uiFontFamily", DEFAULT_UI_FONT),
   );
@@ -274,12 +282,31 @@ function App() {
   }, [themeMode]);
 
   useEffect(() => {
+    // Cmd+W 收起窗口（隐藏到 Dock），仅 macOS 启用：隐藏后点 Dock 图标可唤回
+    // （见 lib.rs Reopen）。其他平台没有 Dock/托盘唤回入口，隐藏后窗口会丢失，故不启用。
+    // 在捕获阶段拦截，先于 xterm 等组件的 keydown 处理，避免被吞掉。
+    if (APP_PLATFORM !== "macos") return;
+    function handleHideWindow(event: KeyboardEvent) {
+      if (!isHideWindowShortcut(event, APP_PLATFORM)) return;
+      event.preventDefault();
+      // 走后端命令收起窗口：全屏时需先退出全屏再隐藏，否则会留下黑屏的空 Space。
+      invoke("hide_main_window").catch(console.error);
+    }
+    window.addEventListener("keydown", handleHideWindow, true);
+    return () => window.removeEventListener("keydown", handleHideWindow, true);
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem("nezha:terminalFontSize", String(terminalFontSize));
   }, [terminalFontSize]);
 
   useEffect(() => {
     localStorage.setItem("nezha:taskDisplayWindow", String(taskDisplayWindow));
   }, [taskDisplayWindow]);
+
+  useEffect(() => {
+    localStorage.setItem("nezha:attentionBadge", attentionBadge ? "1" : "0");
+  }, [attentionBadge]);
 
   useEffect(() => {
     const value = uiFontFamily.trim() || DEFAULT_UI_FONT;
@@ -1136,6 +1163,8 @@ function App() {
               onTerminalFontSizeChange={setTerminalFontSize}
               taskDisplayWindow={taskDisplayWindow}
               onTaskDisplayWindowChange={setTaskDisplayWindow}
+              attentionBadge={attentionBadge}
+              onAttentionBadgeChange={setAttentionBadge}
               uiFontFamily={uiFontFamily}
               onUiFontFamilyChange={setUiFontFamily}
               monoFontFamily={monoFontFamily}
@@ -1154,6 +1183,7 @@ function App() {
         >
           <WelcomePage
             projects={visibleProjectsForWelcome}
+            allProjects={sortedProjects}
             tasks={tasks}
             onOpen={handleOpen}
             onProjectClick={handleProjectClick}
@@ -1170,6 +1200,8 @@ function App() {
             onTerminalFontSizeChange={setTerminalFontSize}
             taskDisplayWindow={taskDisplayWindow}
             onTaskDisplayWindowChange={setTaskDisplayWindow}
+            attentionBadge={attentionBadge}
+            onAttentionBadgeChange={setAttentionBadge}
             uiFontFamily={uiFontFamily}
             onUiFontFamilyChange={setUiFontFamily}
             monoFontFamily={monoFontFamily}

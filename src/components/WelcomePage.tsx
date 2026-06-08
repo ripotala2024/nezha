@@ -88,6 +88,7 @@ function WelcomeEmpty({ hasProjects, onOpen }: { hasProjects: boolean; onOpen: (
 
 export function WelcomePage({
   projects,
+  allProjects,
   tasks,
   onOpen,
   onProjectClick,
@@ -102,6 +103,8 @@ export function WelcomePage({
   onTerminalFontSizeChange,
   taskDisplayWindow,
   onTaskDisplayWindowChange,
+  attentionBadge,
+  onAttentionBadgeChange,
   uiFontFamily,
   onUiFontFamilyChange,
   monoFontFamily,
@@ -110,6 +113,7 @@ export function WelcomePage({
   onEnterSkillHub,
 }: {
   projects: Project[];
+  allProjects: Project[];
   tasks: Task[];
   onOpen: () => void;
   onProjectClick: (p: Project) => void;
@@ -124,6 +128,8 @@ export function WelcomePage({
   onTerminalFontSizeChange: (size: TerminalFontSize) => void;
   taskDisplayWindow: TaskDisplayWindow;
   onTaskDisplayWindowChange: (window: TaskDisplayWindow) => void;
+  attentionBadge: boolean;
+  onAttentionBadgeChange: (enabled: boolean) => void;
   uiFontFamily: FontFamily;
   onUiFontFamilyChange: (family: FontFamily) => void;
   monoFontFamily: FontFamily;
@@ -192,6 +198,8 @@ export function WelcomePage({
               onTerminalFontSizeChange={onTerminalFontSizeChange}
               taskDisplayWindow={taskDisplayWindow}
               onTaskDisplayWindowChange={onTaskDisplayWindowChange}
+              attentionBadge={attentionBadge}
+              onAttentionBadgeChange={onAttentionBadgeChange}
               uiFontFamily={uiFontFamily}
               onUiFontFamilyChange={onUiFontFamilyChange}
               monoFontFamily={monoFontFamily}
@@ -202,10 +210,14 @@ export function WelcomePage({
 
         {view === "timeline" ? (
           <TimelineView
-            projects={projects}
+            projects={allProjects}
             tasks={tasks}
             onTaskClick={(task) => {
-              const project = projects.find((p) => p.id === task.projectId);
+              if (task.projectId === skillHubConfig?.hubProjectId) {
+                onEnterSkillHub();
+                return;
+              }
+              const project = allProjects.find((p) => p.id === task.projectId);
               if (project) onProjectClick(project);
             }}
           />
